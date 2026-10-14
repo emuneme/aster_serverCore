@@ -1,0 +1,22 @@
+[Unit]
+Description=ASTER ServerCore - Gestão e Automação de Servidores Linux
+Documentation=https://github.com/emunene/SGLinux
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/sglinux/backend
+Environment="PATH=/opt/sglinux/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+Environment="PYTHONUNBUFFERED=1"
+Environment="SGLINUX_SIMULATION=false"
+ExecStart=/opt/sglinux/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  sglinux:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sglinux
+    privileged: true
+    network_mode: "host"
+    environment:
+      - SGLINUX_SIMULATION=true
+    volumes:
+      - ./data/mock_etc:/etc_mock
+    restart: unless-stopped
