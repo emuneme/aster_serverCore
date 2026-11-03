@@ -28,6 +28,16 @@ O SGLinux possui um mecanismo inteligente de deteção de ambiente ([backend/app
 
 ---
 
+## ⚡ Instalação Rápida em 1 Comando (Recomendado)
+
+Se preferir instalar e configurar tudo automaticamente com um único comando na sua VPS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/emuneme/aster_serverCore/main/install.sh | sudo bash
+```
+
+---
+
 ## 🚀 3. Passo a Passo de Instalação e Deploy no Servidor
 
 O diretório padrão de instalação para o serviço é `/opt/sglinux`, conforme definido na unit de serviço do systemd ([systemd/sglinux.service](file:///opt/sglinux/systemd/sglinux.service)).

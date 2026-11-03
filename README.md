@@ -16,6 +16,21 @@ Aplicação Web corporativa para provisionamento, monitorização e automação 
 
 ---
 
+## ⚡ Instalação Automática em 1 Comando (Ubuntu Server / VPS)
+
+Para instalar e configurar o **ASTER ServerCore** de forma 100% automatizada na sua VPS ou servidor físico (Ubuntu 22.04 LTS ou 24.04 LTS), execute no terminal do servidor:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/emuneme/aster_serverCore/main/install.sh | sudo bash
+```
+
+*Ou utilizando wget:*
+```bash
+wget -qO- https://raw.githubusercontent.com/emuneme/aster_serverCore/main/install.sh | sudo bash
+```
+
+---
+
 ## 🛠️ Stack Tecnológica
 
 - **Backend**: Python 3.9+ com **FastAPI**, **WebSockets**, **Pydantic v2**, **Jinja2** e **asyncio.subprocess**.
