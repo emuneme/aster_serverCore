@@ -28,11 +28,12 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 echo -e "\n${BLUE}[1/5] A configurar serviço systemd do ASTER ServerCore...${NC}"
 if [ -f "${PROJECT_DIR}/systemd/aster-servercore.service" ]; then
     cp "${PROJECT_DIR}/systemd/aster-servercore.service" /etc/systemd/system/
-    # Também mantém sglinux.service como alias/compatibilidade
-    cp "${PROJECT_DIR}/systemd/sglinux.service" /etc/systemd/system/ 2>/dev/null || true
+    # Remove qualquer unit antiga duplicada e cria symlink de compatibilidade
+    rm -f /etc/systemd/system/sglinux.service 2>/dev/null || true
+    ln -sf /etc/systemd/system/aster-servercore.service /etc/systemd/system/sglinux.service
     systemctl daemon-reload
     systemctl enable aster-servercore
-    echo -e "${GREEN}✔ Serviço 'aster-servercore.service' habilitado com sucesso no boot!${NC}"
+    echo -e "${GREEN}✔ Serviço 'aster-servercore.service' habilitado com sucesso no boot (alias 'sglinux' configurado)!${NC}"
 else
     echo -e "${YELLOW}Aviso: Arquivo systemd/aster-servercore.service não encontrado em ${PROJECT_DIR}.${NC}"
 fi

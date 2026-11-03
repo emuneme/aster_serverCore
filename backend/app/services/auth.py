@@ -29,17 +29,51 @@ class AuthService:
     @classmethod
     def _authenticate_via_pam_linux(cls, username: str, password: str) -> bool:
         """
-        Autentica credenciais diretamente contra a libpam.so.0 do Linux via ctypes.
-        Não requer compilação externa e funciona nativamente no Ubuntu Server.
+        Autentica credenciais diretamente contra o sistema Linux:
+        1. Verificação direta de shadow (/etc/shadow) quando executando como root
+        2. Fallback via PAM com alocação segura em heap libc (sem risco de segfault)
         """
         if not sys.platform.startswith("linux"):
             return False
 
+        # Método 1: Verificação direta via shadow (/etc/shadow) quando root
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            try:
+                import spwd
+                spwd_entry = spwd.getspnam(username)
+                hashed_pwd = spwd_entry.sp_pwdp
+                if hashed_pwd:
+                    try:
+                        import crypt
+                        if crypt.crypt(password, hashed_pwd) == hashed_pwd:
+                            return True
+                    except Exception:
+                        pass
+                    try:
+                        libcrypt_path = ctypes.util.find_library("crypt") or "libcrypt.so.1"
+                        libcrypt = ctypes.CDLL(libcrypt_path)
+                        libcrypt.crypt.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+                        libcrypt.crypt.restype = ctypes.c_char_p
+                        res = libcrypt.crypt(password.encode("utf-8"), hashed_pwd.encode("utf-8"))
+                        if res and res.decode("utf-8") == hashed_pwd:
+                            return True
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        # Método 2: Transação PAM no Linux via ctypes com memória segura libc.calloc/libc.strdup
         try:
             pam_lib_path = ctypes.util.find_library("pam") or "libpam.so.0"
             pam = ctypes.CDLL(pam_lib_path)
+            libc_path = ctypes.util.find_library("c") or "libc.so.6"
+            libc = ctypes.CDLL(libc_path)
 
-            # PAM structs e constantes
+            libc.calloc.restype = ctypes.c_void_p
+            libc.calloc.argtypes = [ctypes.c_size_t, ctypes.c_size_t]
+            libc.strdup.restype = ctypes.c_void_p
+            libc.strdup.argtypes = [ctypes.c_char_p]
+
             PAM_PROMPT_ECHO_OFF = 1
             PAM_SUCCESS = 0
 
@@ -57,14 +91,20 @@ class AuthService:
                 ctypes.c_void_p,
             )
 
+            pwd_bytes = password.encode("utf-8")
+
             def conv_handler(num_msg, msg, resp, appdata_ptr):
-                responses = (PamResponse * num_msg)()
+                # Aloca memória nativa na heap do libc para que o free() do PAM funcione sem segfault
+                resp_addr = libc.calloc(num_msg, ctypes.sizeof(PamResponse))
+                r = ctypes.cast(resp_addr, ctypes.POINTER(PamResponse))
                 for i in range(num_msg):
                     if msg[i].contents.msg_style == PAM_PROMPT_ECHO_OFF:
-                        responses[i].resp = ctypes.c_char_p(password.encode("utf-8"))
-                        responses[i].resp_retcode = 0
-                resp_mem = ctypes.cast(responses, ctypes.POINTER(PamResponse))
-                resp[0] = resp_mem
+                        r[i].resp = ctypes.cast(libc.strdup(pwd_bytes), ctypes.c_char_p)
+                        r[i].resp_retcode = 0
+                    else:
+                        r[i].resp = ctypes.cast(libc.strdup(b""), ctypes.c_char_p)
+                        r[i].resp_retcode = 0
+                resp[0] = r
                 return PAM_SUCCESS
 
             conv_callback = conv_func_type(conv_handler)
@@ -73,20 +113,23 @@ class AuthService:
                 _fields_ = [("conv", conv_func_type), ("appdata_ptr", ctypes.c_void_p)]
 
             conv = PamConv(conv_callback, None)
-            pamh = ctypes.c_void_p()
 
-            # Inicia transação PAM para o serviço "login"
-            ret = pam.pam_start(b"login", username.encode("utf-8"), ctypes.byref(conv), ctypes.byref(pamh))
-            if ret != PAM_SUCCESS:
-                return False
+            # Tenta serviços PAM padrão para daemons (common-auth, sudo, login)
+            for srv in (b"common-auth", b"sudo", b"login"):
+                pamh = ctypes.c_void_p()
+                ret = pam.pam_start(srv, username.encode("utf-8"), ctypes.byref(conv), ctypes.byref(pamh))
+                if ret != PAM_SUCCESS:
+                    continue
 
-            auth_ret = pam.pam_authenticate(pamh, 0)
-            acct_ret = pam.pam_acct_mgmt(pamh, 0) if auth_ret == PAM_SUCCESS else -1
-            pam.pam_end(pamh, auth_ret)
+                auth_ret = pam.pam_authenticate(pamh, 0)
+                acct_ret = pam.pam_acct_mgmt(pamh, 0) if auth_ret == PAM_SUCCESS else -1
+                pam.pam_end(pamh, auth_ret)
 
-            return auth_ret == PAM_SUCCESS and acct_ret == PAM_SUCCESS
-        except Exception as e:
-            # Em caso de falha de carregamento da libpam, fallback para False
+                if auth_ret == PAM_SUCCESS and acct_ret == PAM_SUCCESS:
+                    return True
+
+            return False
+        except Exception:
             return False
 
     @classmethod
@@ -126,13 +169,24 @@ class AuthService:
     def authenticate(cls, username: str, password: str) -> Optional[UserInfo]:
         """
         Valida as credenciais fornecidas tentando:
-        1. Utilizador do Sistema Ubuntu (PAM)
-        2. Conta Administrativa Local SGLinux (Fallback / Standalone)
+        1. Conta Administrativa Local SGLinux / ASTER (Imediato, não depende de PAM)
+        2. Utilizador do Sistema Ubuntu (PAM ou /etc/shadow)
+        3. Fallback de teste em modo simulação
         """
         username_clean = username.strip()
         username_lower = username_clean.lower()
 
-        # 1. Tentativa via PAM do Ubuntu Linux (em produção real)
+        # 1. Conta Administrativa Local SGLinux / ASTER (Prioritária, 100% autônoma e rápida)
+        if username_lower == Settings.ADMIN_USER.lower() and password == Settings.ADMIN_PASSWORD:
+            return UserInfo(
+                username=Settings.ADMIN_USER,
+                auth_type="local",
+                role="admin",
+                display_name="Administrador SGLinux",
+                is_sudo=True,
+            )
+
+        # 2. Tentativa via PAM / shadow do Ubuntu Linux (em produção real)
         if sys.platform.startswith("linux") and cls._authenticate_via_pam_linux(username_clean, password):
             is_sudo = cls._is_user_sudoer(username_clean)
             return UserInfo(
@@ -143,7 +197,7 @@ class AuthService:
                 is_sudo=is_sudo,
             )
 
-        # 2. Em modo simulação / ambiente de teste: aceitar credenciais de teste para root, admin, ubuntu e sysadmin
+        # 3. Em modo simulação / ambiente de teste: aceitar credenciais de teste para root, admin, ubuntu e sysadmin
         if Settings.SIMULATION_MODE:
             test_users = {"admin", "root", "ubuntu", "sysadmin"}
             test_passwords = {
@@ -158,7 +212,6 @@ class AuthService:
                 "aster",
                 "aster2026!",
             }
-            # Se for um dos utilizadores de teste e senha conhecida ou qualquer senha válida em dev
             if username_lower in test_users:
                 if password.strip().lower() in test_passwords or password == Settings.ADMIN_PASSWORD or len(password) >= 3:
                     return UserInfo(
@@ -168,16 +221,6 @@ class AuthService:
                         display_name=f"{username_lower} (Ambiente de Teste)",
                         is_sudo=True,
                     )
-
-        # 3. Tentativa via Conta Administrativa do SGLinux / ASTER (Fallback de Primeiro Acesso)
-        if username_lower == Settings.ADMIN_USER.lower() and password == Settings.ADMIN_PASSWORD:
-            return UserInfo(
-                username=Settings.ADMIN_USER,
-                auth_type="local",
-                role="admin",
-                display_name="Administrador SGLinux",
-                is_sudo=True,
-            )
 
         return None
 

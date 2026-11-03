@@ -207,14 +207,14 @@ cd ..
 
 3. **Habilitar o serviço Systemd**:
 ```bash
-sudo cp systemd/sglinux.service /etc/systemd/system/
+sudo cp systemd/aster-servercore.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now sglinux
+sudo systemctl enable --now aster-servercore
 ```
 
 4. **Verificar o estado do serviço**:
 ```bash
-sudo systemctl status sglinux
+sudo systemctl status aster-servercore
 ```
 
 ---

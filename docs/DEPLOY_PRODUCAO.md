@@ -109,10 +109,12 @@ rsync -avz dist/ root@<IP_DO_SERVIDOR>:/opt/sglinux/frontend/dist/
 ### Passo 3.5: Instalar e Ativar o Serviço Systemd (Arranque no Boot)
 Configure a inicialização automática do **ASTER ServerCore** como serviço nativo de sistema gerenciado pelo `systemd`:
 
-1. Copie o ficheiro de serviço oficial do ASTER ServerCore (e o alias de compatibilidade):
+1. Copie o ficheiro de serviço oficial do ASTER ServerCore:
    ```bash
    sudo cp /opt/sglinux/systemd/aster-servercore.service /etc/systemd/system/
-   sudo cp /opt/sglinux/systemd/sglinux.service /etc/systemd/system/
+   # Cria symlink de compatibilidade para 'sglinux' apontando para o mesmo serviço (evita conflitos de porta 8000)
+   sudo rm -f /etc/systemd/system/sglinux.service 2>/dev/null || true
+   sudo ln -sf /etc/systemd/system/aster-servercore.service /etc/systemd/system/sglinux.service
    ```
 
 2. Recarregue os daemons do systemd:
@@ -329,6 +331,9 @@ systemctl is-enabled ssh
 
 | Sintoma | Causa Mais Provável | Solução |
 | :--- | :--- | :--- |
+| **"Failed to fetch" na tela de Login / Uvicorn status=3** | Conflito na porta 8000 (serviço duplicado `sglinux` ou processo uvicorn zumbi). | Execute `sudo fuser -k 8000/tcp` e reinicie unicamente com `sudo systemctl restart aster-servercore`. |
+| **`curl: (52) Empty reply from server` no login** | Falha de memória no PAM do Linux ao tentar desalocar buffers. | Já corrigido no ASTER ServerCore: a conta `admin` é validada prioritariamente e o PAM utiliza heap nativo seguro `libc.calloc` e `/etc/shadow`. |
+| **Desejo alterar a palavra-passe do utilizador `admin`** | Palavra-passe padrão de fábrica utilizada. | No ficheiro `/etc/systemd/system/aster-servercore.service`, adicione `Environment="SGLINUX_ADMIN_PASSWORD=SuaSenhaForte!"` sob `[Service]`, execute `sudo systemctl daemon-reload` e `sudo systemctl restart aster-servercore`. |
 | **"bind 0.0.0.0:53 failed: Address already in use"** | O `systemd-resolved` ainda está escutando na porta 53. | O Wizard aplica a desativação via drop-in. Caso tenha sido iniciado manualmente, execute: `sudo systemctl restart systemd-resolved` e verifique com `sudo ss -tuln \| grep :53`. |
 | **Estações Windows não ingressam no domínio** | O DNS das estações não aponta para o IP do Samba AD DC. | Verifique se o DHCP distribuiu o IP do servidor como DNS primário, ou configure manualmente o DNS da estação para o IP do servidor. |
 | **Terminal WebSocket não conecta** | Firewall bloqueando ou proxy cortando cabeçalhos `Upgrade`. | Se usar Nginx ou Cloudflare, confirme se as diretivas de WebSocket (`Upgrade` e `Connection "upgrade"`) estão ativas. |
