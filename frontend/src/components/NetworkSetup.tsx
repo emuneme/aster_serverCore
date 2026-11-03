@@ -33,7 +33,7 @@ export const NetworkSetup: React.FC<NetworkSetupProps> = ({ onSuccess }) => {
   // 2. Form fields
   const [selectedInterface, setSelectedInterface] = useState<string>('');
   const [address, setAddress] = useState<string>('192.168.1.10/24');
-  const [gateway, setGateway] = useState<string>('192.168.1.1');
+  const [gateway, setGateway] = useState<string>('');
   const [dnsList, setDnsList] = useState<string[]>(['127.0.0.1']);
   const [newDnsInput, setNewDnsInput] = useState<string>('');
   const [dnsError, setDnsError] = useState<string | null>(null);
@@ -154,6 +154,19 @@ export const NetworkSetup: React.FC<NetworkSetupProps> = ({ onSuccess }) => {
       }
     };
   }, []);
+
+  const handleInterfaceChange = (ifaceName: string) => {
+    setSelectedInterface(ifaceName);
+    const ifaceObj = interfaces.find((i) => i.name === ifaceName);
+    if (ifaceObj && ifaceObj.ipv4 && ifaceObj.ipv4.length > 0) {
+      const activeIp = ifaceObj.ipv4.find((ip) => !ip.address.startsWith('127.'));
+      if (activeIp) {
+        setAddress(`${activeIp.address}/24`);
+      }
+    }
+    // Ao alternar para outra placa (especialmente LAN), o gateway deve ficar vazio por padrão para não gerar conflito de rota padrão com a placa WAN
+    setGateway('');
+  };
 
   // Manipulação de tags DNS
   const handleAddDns = () => {
@@ -431,7 +444,7 @@ export const NetworkSetup: React.FC<NetworkSetupProps> = ({ onSuccess }) => {
               <div className="relative">
                 <select
                   value={selectedInterface}
-                  onChange={(e) => setSelectedInterface(e.target.value)}
+                  onChange={(e) => handleInterfaceChange(e.target.value)}
                   disabled={loadingInterfaces || isApplying}
                   className="w-full bg-slate-950 border border-slate-700 text-white rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:border-blue-500 transition disabled:opacity-60"
                 >
@@ -483,11 +496,11 @@ export const NetworkSetup: React.FC<NetworkSetupProps> = ({ onSuccess }) => {
                 value={gateway}
                 onChange={(e) => setGateway(e.target.value)}
                 disabled={isApplying}
-                placeholder="Ex: 192.168.1.1"
+                placeholder="Ex: 192.168.1.1 (deixe vazio para a placa LAN)"
                 className="w-full bg-slate-950 border border-slate-700 text-white font-mono rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:border-blue-500 transition"
               />
               <p className="text-xs text-slate-400 mt-1">
-                Roteador de saída para acesso à internet ou outras sub-redes corporativas.
+                Roteador de saída para a internet. <strong className="text-amber-400">Placa LAN:</strong> Deixe este campo em <strong>branco</strong> se o servidor já acessa a internet pela placa WAN.
               </p>
             </div>
           </div>

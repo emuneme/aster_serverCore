@@ -227,20 +227,20 @@ class WizardOrchestrator:
                 await self.log(f"Gateway: {self.request.gateway}")
             await self.log(f"DNS Upstream: {', '.join(str(d) for d in self.request.upstream_dns)}")
 
-            # 1.1 Renderizar e salvar Netplan
+            # 1.1 Renderizar e salvar Netplan preservando interfaces já existentes
+            ethernets_dict = load_existing_ethernets()
+            ethernets_dict[self.request.network_interface] = EthernetInterface(
+                name=self.request.network_interface,
+                dhcp4=False,
+                addresses=[self.request.server_ip_cidr],
+                gateway4=str(self.request.gateway) if self.request.gateway else None,
+                nameservers=NameserverConfig(
+                    addresses=[str(d) for d in self.request.upstream_dns]
+                )
+            )
             netplan_obj = NetplanConfig(
                 renderer="networkd",
-                ethernets={
-                    self.request.network_interface: EthernetInterface(
-                        name=self.request.network_interface,
-                        dhcp4=False,
-                        addresses=[self.request.server_ip_cidr],
-                        gateway4=str(self.request.gateway) if self.request.gateway else None,
-                        nameservers=NameserverConfig(
-                            addresses=[str(d) for d in self.request.upstream_dns]
-                        )
-                    )
-                }
+                ethernets=ethernets_dict
             )
             netplan_yaml = render_netplan(netplan_obj)
             write_and_backup(settings.NETPLAN_FILE, netplan_yaml)
@@ -333,7 +333,8 @@ class WizardOrchestrator:
                         logger.warning(f"Não foi possível remover sam.ldb: {e}")
 
             # 2.2 Provisionamento com samba-tool
-            dns_forwarder_arg = str(self.request.upstream_dns[0]) if self.request.upstream_dns else "8.8.8.8"
+            dns_forwarders_list = [str(d) for d in self.request.upstream_dns] if self.request.upstream_dns else ["8.8.8.8"]
+            dns_forwarder_arg = " ".join(dns_forwarders_list)
             cmd_provision = [
                 "samba-tool", "domain", "provision",
                 f"--realm={self.request.realm}",
@@ -342,7 +343,7 @@ class WizardOrchestrator:
                 "--server-role=dc",
                 "--dns-backend=SAMBA_INTERNAL",
                 "--use-rfc2307",
-                f"--dns-forwarder={dns_forwarder_arg}"
+                f"--option=dns forwarder={dns_forwarder_arg}"
             ]
 
             ok_prov = await self.run_command(cmd_provision, "Executando provisionamento com samba-tool")

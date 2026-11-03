@@ -16,6 +16,76 @@ class SimpleNetworkSetup(BaseModel):
     gateway: Optional[str] = Field(default=None, description="Gateway padrão IPv4")
     nameservers: List[str] = Field(default_factory=lambda: ["127.0.0.1"], description="Lista de servidores DNS")
 
+def load_existing_ethernets() -> Dict[str, EthernetInterface]:
+    """
+    Le o arquivo Netplan atual (ou de instalacao do sistema) e converte as
+    interfaces existentes em dicionario de EthernetInterface, preservando-as.
+    """
+    import yaml
+    path = settings.NETPLAN_FILE
+    candidate_paths = [path]
+    if not settings.SIMULATION_MODE and not path.exists():
+        from pathlib import Path
+        netplan_dir = Path("/etc/netplan")
+        if netplan_dir.exists():
+            candidate_paths.extend(list(netplan_dir.glob("*.yaml")) + list(netplan_dir.glob("*.yml")))
+
+    for p in candidate_paths:
+        if not p.exists():
+            continue
+        try:
+            raw = p.read_text(encoding="utf-8")
+            data = yaml.safe_load(raw)
+            if not isinstance(data, dict):
+                continue
+            eths_data = data.get("network", {}).get("ethernets", {})
+            if not isinstance(eths_data, dict) or not eths_data:
+                continue
+
+            parsed: Dict[str, EthernetInterface] = {}
+            for if_name, if_cfg in eths_data.items():
+                if not isinstance(if_cfg, dict):
+                    continue
+                dhcp = bool(if_cfg.get("dhcp4", False))
+                addrs = if_cfg.get("addresses", []) or []
+                if isinstance(addrs, str):
+                    addrs = [addrs]
+                gw = if_cfg.get("gateway4")
+                if not gw and "routes" in if_cfg:
+                    for r in if_cfg.get("routes", []):
+                        if isinstance(r, dict) and r.get("to") in ("default", "0.0.0.0/0"):
+                            gw = r.get("via")
+                            break
+                ns_cfg = None
+                ns_data = if_cfg.get("nameservers", {})
+                if isinstance(ns_data, dict):
+                    ns_addrs = ns_data.get("addresses", []) or []
+                    if isinstance(ns_addrs, str):
+                        ns_addrs = [ns_addrs]
+                    ns_search = ns_data.get("search", []) or []
+                    if isinstance(ns_search, str):
+                        ns_search = [ns_search]
+                    if ns_addrs:
+                        ns_cfg = NameserverConfig(addresses=ns_addrs, search=ns_search)
+                mtu_val = if_cfg.get("mtu", 1500)
+                if not isinstance(mtu_val, int) or mtu_val < 576 or mtu_val > 9000:
+                    mtu_val = 1500
+
+                parsed[if_name] = EthernetInterface(
+                    name=if_name,
+                    dhcp4=dhcp,
+                    addresses=addrs,
+                    gateway4=gw,
+                    nameservers=ns_cfg,
+                    mtu=mtu_val
+                )
+            if parsed:
+                return parsed
+        except Exception:
+            continue
+
+    return {}
+
 router = APIRouter(prefix="/network", tags=["Network & Netplan"])
 
 @router.get("/interfaces")
@@ -170,20 +240,20 @@ def apply_simple_network(config: SimpleNetworkSetup):
 
         gw = config.gateway.strip() if config.gateway and config.gateway.strip() else None
 
+        existing_ethernets = load_existing_ethernets()
+        existing_ethernets[config.interface] = EthernetInterface(
+            name=config.interface,
+            dhcp4=False,
+            addresses=[config.address],
+            gateway4=gw,
+            nameservers=NameserverConfig(
+                addresses=clean_dns,
+                search=["empresa.lan"]
+            )
+        )
         netplan_cfg = NetplanConfig(
             renderer="networkd",
-            ethernets={
-                config.interface: EthernetInterface(
-                    name=config.interface,
-                    dhcp4=False,
-                    addresses=[config.address],
-                    gateway4=gw,
-                    nameservers=NameserverConfig(
-                        addresses=clean_dns,
-                        search=["empresa.lan"]
-                    )
-                )
-            }
+            ethernets=existing_ethernets
         )
 
         rendered = render_netplan(netplan_cfg)
@@ -308,20 +378,20 @@ async def websocket_network_apply(websocket: WebSocket):
 
             # Construir modelo Netplan e renderizar
             import yaml
+            existing_ethernets = load_existing_ethernets()
+            existing_ethernets[iface] = EthernetInterface(
+                name=iface,
+                dhcp4=False,
+                addresses=[str(address).strip()],
+                gateway4=gw_str,
+                nameservers=NameserverConfig(
+                    addresses=dns_list,
+                    search=["empresa.lan"]
+                )
+            )
             netplan_cfg = NetplanConfig(
                 renderer="networkd",
-                ethernets={
-                    iface: EthernetInterface(
-                        name=iface,
-                        dhcp4=False,
-                        addresses=[str(address).strip()],
-                        gateway4=gw_str,
-                        nameservers=NameserverConfig(
-                            addresses=dns_list,
-                            search=["empresa.lan"]
-                        )
-                    )
-                }
+                ethernets=existing_ethernets
             )
 
             rendered = render_netplan(netplan_cfg)

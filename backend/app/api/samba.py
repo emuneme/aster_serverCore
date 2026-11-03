@@ -164,7 +164,7 @@ def provision_samba_ad_dc(request: SambaProvisionRequest):
         "--use-rfc2307"
     ]
     if request.dns_forwarder:
-        cmd_args.append(f"--dns-forwarder={request.dns_forwarder}")
+        cmd_args.append(f"--option=dns forwarder={request.dns_forwarder}")
 
     # Gravar arquivo de configuração em modo simulação
     if settings.SIMULATION_MODE:
